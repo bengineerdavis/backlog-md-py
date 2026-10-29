@@ -64,6 +64,12 @@ that may use remote freshness and active branch reads:
 `activeBranchDays: 30`, and `autoCommit: false`. For a filesystem-only
 scratch project, pass `--no-git`:
 
+A branch whose commits are all reachable from `HEAD` — a fully-merged
+feature branch — is excluded from active-branch snapshots, since its task
+files are stale copies of ones the working tree already shows. This keeps
+the duplicate-id warning for genuine version conflicts between live
+branches rather than for merged work awaiting branch cleanup.
+
 ```bash
 backlog-py --cwd /tmp/backlog-md-py-demo init --defaults --no-git
 ```

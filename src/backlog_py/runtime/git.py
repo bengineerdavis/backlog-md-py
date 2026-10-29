@@ -551,8 +551,27 @@ def _recent_branch_refs(project: BacklogProject) -> list[str]:
             continue
         if timestamp < cutoff:
             continue
+        if _ref_is_merged_into_head(project.root, refname):
+            continue
         refs.append((timestamp, refname))
     return [ref for _, ref in sorted(refs)]
+
+
+def _ref_is_merged_into_head(work_dir: Path, refname: str) -> bool:
+    """True when every commit on ``refname`` is already reachable from HEAD.
+
+    A fully-merged branch carries stale copies of live task files — same ids
+    under old slugs — and contributes nothing the working tree does not show,
+    so it drops out of the snapshot set. The check is a local `merge-base`
+    call: no network, so `remoteOperations` does not gate it, and a detached
+    or unborn HEAD simply reports the ref unmerged rather than failing.
+    """
+    result = _run_git(work_dir, "merge-base", "HEAD", refname)
+    if result.returncode != 0:
+        return False
+    base = result.stdout.strip()
+    ref_tip = _run_git(work_dir, "rev-parse", refname)
+    return ref_tip.returncode == 0 and base == ref_tip.stdout.strip()
 
 
 def _current_branch_name(work_dir: Path) -> str:
