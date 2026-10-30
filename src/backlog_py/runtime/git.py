@@ -562,16 +562,14 @@ def _ref_is_merged_into_head(work_dir: Path, refname: str) -> bool:
 
     A fully-merged branch carries stale copies of live task files — same ids
     under old slugs — and contributes nothing the working tree does not show,
-    so it drops out of the snapshot set. The check is a local `merge-base`
-    call: no network, so `remoteOperations` does not gate it, and a detached
-    or unborn HEAD simply reports the ref unmerged rather than failing.
+    so it drops out of the snapshot set. `--is-ancestor` encodes the answer as
+    an exit code in one local `merge-base` call: no network, so
+    `remoteOperations` does not gate it, and a detached or unborn HEAD exits
+    nonzero, so the ref reports unmerged rather than failing or being wrongly
+    included.
     """
-    result = _run_git(work_dir, "merge-base", "HEAD", refname)
-    if result.returncode != 0:
-        return False
-    base = result.stdout.strip()
-    ref_tip = _run_git(work_dir, "rev-parse", refname)
-    return ref_tip.returncode == 0 and base == ref_tip.stdout.strip()
+    result = _run_git(work_dir, "merge-base", "--is-ancestor", refname, "HEAD")
+    return result.returncode == 0
 
 
 def _current_branch_name(work_dir: Path) -> str:

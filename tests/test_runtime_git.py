@@ -561,3 +561,23 @@ def test_branch_snapshots_skip_refs_merged_into_head(tmp_path: Path) -> None:
     assert any("still-open" in ref for ref in refs), (
         f"an unmerged branch was dropped with the merged one: {sorted(refs)}"
     )
+
+
+def test_merged_check_reports_unmerged_when_merge_base_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A detached or unborn HEAD makes `merge-base` exit nonzero.
+
+    The helper must report the ref unmerged (False) rather than treat the
+    failure as "merged" and wrongly include every ref — polarity matters, and
+    a flipped guard would silently re-include all branches.
+    """
+    import subprocess as sp
+
+    monkeypatch.setattr(
+        git_module,
+        "_run_git",
+        lambda *a, **k: sp.CompletedProcess(a, 128, "", "fatal: ambiguous argument"),
+    )
+
+    assert git_module._ref_is_merged_into_head(tmp_path, "refs/heads/x") is False
