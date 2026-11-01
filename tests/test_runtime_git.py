@@ -416,6 +416,10 @@ def test_branch_snapshots_read_each_shared_blob_once(
     _commit(repo, "seed")
     for name in ("alpha", "beta", "gamma"):
         _git(repo, "checkout", "-q", "-b", name)
+        # Unmerged work keeps the branch in the snapshot set: a branch with no
+        # commits ahead of HEAD is merged by definition and drops out.
+        _task(project_root, f"task-1 - {name}.md")
+        _commit(repo, f"{name} work")
         _git(repo, "checkout", "-q", "main")
     config = project_root.config_path
     config.write_text(
@@ -438,9 +442,13 @@ def test_branch_snapshots_read_each_shared_blob_once(
     monkeypatch.setattr(git_module, "_run_git_bytes", recording)
     snapshots = git_module.list_active_branch_task_snapshots(project)
 
-    assert len(snapshots) == 3, "each branch should still contribute its own snapshot"
+    assert len({snapshot.ref for snapshot in snapshots}) == 3, (
+        "each unmerged branch should contribute snapshots"
+    )
     assert len(requested) == 1, "content must be read in one cat-file process for the whole scan"
-    assert len(requested[0].split()) == 1, "the shared blob was requested more than once"
+    assert len(requested[0].split()) == len({snapshot.source for snapshot in snapshots}), (
+        "every unique blob was requested exactly once"
+    )
 
 
 def _other_checkouts_repo(tmp_path: Path):
@@ -525,3 +533,51 @@ def test_worktree_scan_falls_back_when_list_z_is_unsupported(
     monkeypatch.setattr(git_module, "_run_git", without_z)
 
     assert MutableRepository(project).create_task(title="four").id == "TASK-4"
+
+
+def test_branch_snapshots_skip_refs_merged_into_head(tmp_path: Path) -> None:
+    """A branch whose work is merged carries stale copies of live task files.
+
+    Keeping it in the snapshot set means every listing warns about a duplicate
+    id for a file that only differs by path — the merged branch's slug, which
+    the live listing renamed. The merged branch contributes nothing the working
+    tree does not already show, so it drops out of the candidate set.
+    """
+    project = _branch_snapshot_repo(tmp_path, 2)
+    repo = project.root
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "-q", "feature")
+    _git(repo, "checkout", "-q", "-b", "still-open")
+    _task(project, "task-3 - open.md")
+    _commit(repo, "unmerged branch task")
+    _git(repo, "checkout", "-q", "main")
+
+    snapshots = git_module.list_active_branch_task_snapshots(project)
+    refs = {snapshot.ref for snapshot in snapshots}
+
+    assert all("feature" not in ref for ref in refs), (
+        f"a fully-merged branch still contributed snapshots: {sorted(refs)}"
+    )
+    assert any("still-open" in ref for ref in refs), (
+        f"an unmerged branch was dropped with the merged one: {sorted(refs)}"
+    )
+
+
+def test_merged_check_reports_unmerged_when_merge_base_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A detached or unborn HEAD makes `merge-base` exit nonzero.
+
+    The helper must report the ref unmerged (False) rather than treat the
+    failure as "merged" and wrongly include every ref — polarity matters, and
+    a flipped guard would silently re-include all branches.
+    """
+    import subprocess as sp
+
+    monkeypatch.setattr(
+        git_module,
+        "_run_git",
+        lambda *a, **k: sp.CompletedProcess(a, 128, "", "fatal: ambiguous argument"),
+    )
+
+    assert git_module._ref_is_merged_into_head(tmp_path, "refs/heads/x") is False
